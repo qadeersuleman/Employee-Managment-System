@@ -1,154 +1,482 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import {
-  Activity, ArrowDownRight, ArrowUpRight, Bell, BriefcaseBusiness, CalendarDays,
-  Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Download,
-  Ellipsis, Filter, LayoutDashboard, LogOut, Menu, MoreHorizontal, Plus, Search,
-  Settings2, ShieldCheck, Sparkles, Users, Wallet, X, Pencil, Trash2, Eye,
-  Building2, Mail, Phone, MapPin, UserRound, UserCheck, UserX, RotateCcw
-} from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { AppData, Employee, AttendanceRecord, AttendanceStatus, WorkMode, LeaveRequest } from '@/types';
+import { initialData } from '@/lib/dummyData';
+import { loadAppData, saveAppData, resetAppData } from '@/lib/storage';
 
-type Employee = {
-  id: string; name: string; email: string; phone: string; role: string;
-  department: string; status: 'Active' | 'On leave' | 'Probation';
-  salary: number; joined: string; location: string; attendance: 'Present' | 'Absent' | 'Not marked';
-};
+import { Sidebar, NavItem } from '@/components/Sidebar';
+import { Header } from '@/components/Header';
+import { OverviewView } from '@/components/views/OverviewView';
+import { EmployeesView } from '@/components/views/EmployeesView';
+import { AttendanceView } from '@/components/views/AttendanceView';
+import { DepartmentsView } from '@/components/views/DepartmentsView';
+import { LeavesView } from '@/components/views/LeavesView';
+import { SettingsView } from '@/components/views/SettingsView';
 
-const initialEmployees: Employee[] = [
-  { id:'EMP-1001', name:'Olivia Rhye', email:'olivia@peopleos.demo', phone:'+1 555 0101', role:'Product Designer', department:'Design', status:'Active', salary:78000, joined:'2023-02-14', location:'New York', attendance:'Present' },
-  { id:'EMP-1002', name:'Phoenix Baker', email:'phoenix@peopleos.demo', phone:'+1 555 0102', role:'Engineering Lead', department:'Engineering', status:'Active', salary:112000, joined:'2022-08-09', location:'Austin', attendance:'Present' },
-  { id:'EMP-1003', name:'Lana Steiner', email:'lana@peopleos.demo', phone:'+1 555 0103', role:'HR Manager', department:'Human Resources', status:'Active', salary:86000, joined:'2021-11-21', location:'Chicago', attendance:'Present' },
-  { id:'EMP-1004', name:'Demi Wilkinson', email:'demi@peopleos.demo', phone:'+1 555 0104', role:'Marketing Specialist', department:'Marketing', status:'On leave', salary:64000, joined:'2024-01-08', location:'Remote', attendance:'Not marked' },
-  { id:'EMP-1005', name:'Candice Wu', email:'candice@peopleos.demo', phone:'+1 555 0105', role:'Frontend Developer', department:'Engineering', status:'Active', salary:92000, joined:'2023-06-12', location:'Seattle', attendance:'Present' },
-  { id:'EMP-1006', name:'Natali Craig', email:'natali@peopleos.demo', phone:'+1 555 0106', role:'Finance Analyst', department:'Finance', status:'Probation', salary:59000, joined:'2025-03-17', location:'Boston', attendance:'Absent' },
-  { id:'EMP-1007', name:'Drew Cano', email:'drew@peopleos.demo', phone:'+1 555 0107', role:'UX Researcher', department:'Design', status:'Active', salary:81000, joined:'2024-09-02', location:'New York', attendance:'Not marked' },
-  { id:'EMP-1008', name:'Orlando Diggs', email:'orlando@peopleos.demo', phone:'+1 555 0108', role:'Operations Associate', department:'Operations', status:'Active', salary:55000, joined:'2025-01-20', location:'Austin', attendance:'Present' },
-];
-
-const departments = ['Engineering','Design','Human Resources','Marketing','Finance','Operations'];
-const emptyForm = { name:'', email:'', phone:'', role:'', department:'Engineering', status:'Active' as Employee['status'], salary:'', joined:new Date().toISOString().slice(0,10), location:'Remote' };
-
-const money = (n:number) => new Intl.NumberFormat('en-US', { style:'currency', currency:'USD', maximumFractionDigits:0 }).format(n);
-const initials = (name:string) => name.split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase();
-const avatarColors = ['#e0e7ff','#d1fae5','#fce7f3','#ffedd5','#dbeafe','#f3e8ff'];
+import { EmployeeModal } from '@/components/modals/EmployeeModal';
+import { EmployeeDrawer } from '@/components/modals/EmployeeDrawer';
+import { LeaveModal } from '@/components/modals/LeaveModal';
+import { Toast } from '@/components/Toast';
 
 export default function Home() {
-  const [employees, setEmployees] = useState<Employee[]>(initialEmployees);
-  const [ready, setReady] = useState(false);
-  const [query, setQuery] = useState('');
-  const [department, setDepartment] = useState('All departments');
-  const [statusFilter, setStatusFilter] = useState('All status');
-  const [modal, setModal] = useState<'add'|'edit'|'view'|null>(null);
-  const [selected, setSelected] = useState<Employee|null>(null);
-  const [form, setForm] = useState(emptyForm);
-  const [toast, setToast] = useState('');
-  const [nav, setNav] = useState('Overview');
-  const [mobileMenu, setMobileMenu] = useState(false);
+  const [data, setData] = useState<AppData>(initialData);
+  const [isClientReady, setIsClientReady] = useState(false);
+  const [currentTab, setCurrentTab] = useState<NavItem>('overview');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState('All');
 
+  // Modals & Drawers state
+  const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [viewingEmployee, setViewingEmployee] = useState<Employee | null>(null);
+  const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  // Load from localStorage on client mount
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('peopleos-employees-v1');
-      if (saved) setEmployees(JSON.parse(saved));
-    } catch {}
-    setReady(true);
+    const loaded = loadAppData();
+    setData(loaded);
+    setIsClientReady(true);
   }, []);
-  useEffect(() => { if (ready) localStorage.setItem('peopleos-employees-v1', JSON.stringify(employees)); }, [employees, ready]);
-  useEffect(() => { if (!toast) return; const t = window.setTimeout(()=>setToast(''), 2600); return ()=>window.clearTimeout(t); }, [toast]);
 
-  const filtered = useMemo(() => employees.filter(e =>
-    [e.name,e.email,e.role,e.id].some(v=>v.toLowerCase().includes(query.toLowerCase())) &&
-    (department==='All departments' || e.department===department) &&
-    (statusFilter==='All status' || e.status===statusFilter)
-  ), [employees, query, department, statusFilter]);
+  // Save to localStorage whenever data changes
+  useEffect(() => {
+    if (isClientReady) {
+      saveAppData(data);
+    }
+  }, [data, isClientReady]);
 
-  const active = employees.filter(e=>e.status==='Active').length;
-  const onLeave = employees.filter(e=>e.status==='On leave').length;
-  const present = employees.filter(e=>e.attendance==='Present').length;
-  const payroll = employees.filter(e=>e.status!=='On leave').reduce((s,e)=>s+e.salary,0);
-  const deptCounts = departments.map(d=>({name:d,count:employees.filter(e=>e.department===d).length})).filter(d=>d.count);
-  const openAdd = () => { setSelected(null); setForm({...emptyForm, joined:new Date().toISOString().slice(0,10)}); setModal('add'); };
-  const openEdit = (e:Employee) => { setSelected(e); setForm({name:e.name,email:e.email,phone:e.phone,role:e.role,department:e.department,status:e.status,salary:String(e.salary),joined:e.joined,location:e.location}); setModal('edit'); };
-  const saveEmployee = (ev:React.FormEvent) => {
-    ev.preventDefault();
-    if (!form.name.trim() || !form.email.trim() || !form.role.trim()) { setToast('Please fill name, email and role.'); return; }
-    const duplicate = employees.some(e=>e.email.toLowerCase()===form.email.toLowerCase() && e.id!==selected?.id);
-    if (duplicate) { setToast('An employee with this email already exists.'); return; }
-    const payload:Employee = { ...form, id:selected?.id || `EMP-${1001+Math.max(0,...employees.map(e=>(Number(e.id.split('-')[1])||1000)-1000))}`, salary:Number(form.salary)||0, attendance:selected?.attendance||'Not marked' };
-    if (modal==='edit' && selected) setEmployees(old=>old.map(e=>e.id===selected.id?payload:e));
-    else setEmployees(old=>[payload,...old]);
-    setModal(null); setToast(modal==='edit'?'Employee updated successfully':'Employee added successfully');
-  };
-  const removeEmployee = (e:Employee) => {
-    if (window.confirm(`Delete ${e.name} from the demo employee list?`)) { setEmployees(old=>old.filter(x=>x.id!==e.id)); setToast('Employee deleted'); }
-  };
-  const markAttendance = (e:Employee, value:'Present'|'Absent') => {
-    setEmployees(old=>old.map(x=>x.id===e.id?{...x,attendance:value}:x)); setToast(`${e.name}: marked ${value.toLowerCase()}`);
-  };
-  const exportCsv = () => {
-    const cols = ['id','name','email','phone','role','department','status','salary','joined','location','attendance'] as const;
-    const csv = [cols.join(','), ...filtered.map(e=>cols.map(k=>`"${String(e[k]).replaceAll('"','""')}"`).join(','))].join('\n');
-    const url = URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));
-    const a = document.createElement('a'); a.href=url; a.download='peopleos-employees.csv'; a.click(); URL.revokeObjectURL(url); setToast('CSV exported');
-  };
-  const resetDemo = () => { if(window.confirm('Reset all changes and restore sample employees?')) { setEmployees(initialEmployees); setToast('Demo data restored'); } };
+  // Auto-dismiss toast
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
-  return <div className="min-h-screen bg-[#f5f7fb] text-[#182230]">
-    <aside className={`fixed inset-y-0 left-0 z-30 flex w-[248px] flex-col border-r border-slate-200 bg-white px-5 py-6 transition-transform lg:translate-x-0 ${mobileMenu?'translate-x-0':'-translate-x-full'}`}>
-      <div className="flex items-center gap-3 px-1"><div className="grid h-10 w-10 place-items-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-200"><Users size={21}/></div><div><div className="text-lg font-extrabold tracking-tight">people<span className="text-indigo-600">OS</span></div><div className="text-[10px] font-bold uppercase tracking-[.2em] text-slate-400">People, simplified</div></div><button onClick={()=>setMobileMenu(false)} className="ml-auto lg:hidden"><X size={19}/></button></div>
-      <div className="mt-10 px-3 text-[10px] font-bold uppercase tracking-[.16em] text-slate-400">Workspace</div>
-      <nav className="mt-3 space-y-1">{[{label:'Overview',icon:LayoutDashboard},{label:'Employees',icon:Users},{label:'Attendance',icon:CalendarDays},{label:'Departments',icon:Building2}].map(item=><button key={item.label} onClick={()=>{setNav(item.label); if(item.label==='Attendance')setStatusFilter('All status'); setMobileMenu(false)}} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${nav===item.label?'bg-indigo-50 text-indigo-700':'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}><item.icon size={18}/>{item.label}{item.label==='Employees'&&<span className="ml-auto rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{employees.length}</span>}</button>)}</nav>
-      <div className="mt-8 px-3 text-[10px] font-bold uppercase tracking-[.16em] text-slate-400">Preferences</div>
-      <nav className="mt-3 space-y-1">{[{label:'Settings',icon:Settings2},{label:'Help center',icon:CircleHelp}].map(item=><button key={item.label} onClick={()=>{setNav(item.label);setToast(item.label==='Settings'?'Demo settings: local browser storage is enabled.':'Tip: use Add employee to create your first record.')}} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold ${nav===item.label?'bg-indigo-50 text-indigo-700':'text-slate-500 hover:bg-slate-50'}`}><item.icon size={18}/>{item.label}</button>)}</nav>
-      <div className="mt-auto rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 p-4 text-white"><div className="flex items-center gap-2 text-xs font-bold"><Sparkles size={15}/> PEOPLEOS DEMO</div><p className="mt-2 text-xs leading-5 text-indigo-100">A friendly workspace to keep your team organized.</p><button onClick={resetDemo} className="mt-3 flex items-center gap-2 rounded-lg bg-white/15 px-3 py-2 text-xs font-bold hover:bg-white/25"><RotateCcw size={13}/> Reset demo data</button></div>
-      <div className="mt-5 flex items-center gap-3 border-t border-slate-100 pt-4"><div className="grid h-9 w-9 place-items-center rounded-full bg-amber-100 text-xs font-extrabold text-amber-800">AD</div><div className="min-w-0 flex-1"><div className="text-sm font-bold">Admin Demo</div><div className="text-xs text-slate-400">Workspace owner</div></div><button onClick={()=>setToast('Demo mode has no sign-in session.')} aria-label="Sign out"><LogOut size={16} className="text-slate-400"/></button></div>
-    </aside>
-    {mobileMenu&&<div className="fixed inset-0 z-20 bg-slate-900/30 lg:hidden" onClick={()=>setMobileMenu(false)}/>}
-    <main className="min-h-screen lg:ml-[248px]">
-      <header className="sticky top-0 z-10 flex h-[76px] items-center justify-between border-b border-slate-200/80 bg-white/90 px-5 backdrop-blur-xl sm:px-8">
-        <div className="flex items-center gap-3"><button onClick={()=>setMobileMenu(true)} className="rounded-lg p-2 hover:bg-slate-100 lg:hidden"><Menu size={20}/></button><div><div className="text-xs font-semibold text-slate-400">Workspace / <span className="text-slate-600">{nav}</span></div><div className="mt-1 text-lg font-extrabold tracking-tight">{nav==='Overview'?'Good afternoon, Admin 👋':nav}</div></div></div>
-        <div className="flex items-center gap-3"><div className="hidden items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500 sm:flex"><span className="h-2 w-2 rounded-full bg-emerald-500"/>{new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</div><button onClick={()=>setToast('You’re all caught up!')} className="relative rounded-xl border border-slate-200 p-2.5 text-slate-500 hover:bg-slate-50"><Bell size={18}/><span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white"/></button><button onClick={openAdd} className="hidden items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-200 transition hover:-translate-y-0.5 hover:bg-indigo-700 sm:flex"><Plus size={17}/> Add employee</button></div>
-      </header>
-      <div className="mx-auto max-w-[1500px] space-y-7 px-5 py-7 sm:px-8 sm:py-8">
-        <section className="relative overflow-hidden rounded-[28px] bg-gradient-to-r from-[#312e81] via-[#4338ca] to-[#6d5ce8] p-6 text-white shadow-xl shadow-indigo-200/50 sm:p-8">
-          <div className="pointer-events-none absolute -right-10 -top-24 h-72 w-72 rounded-full border-[38px] border-white/5"/><div className="pointer-events-none absolute right-24 top-10 h-32 w-32 rounded-full bg-violet-300/10 blur-2xl"/>
-          <div className="relative z-[1] max-w-xl"><div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-[11px] font-bold tracking-wide text-indigo-100"><Activity size={13}/> YOUR TEAM AT A GLANCE</div><h1 className="mt-4 text-2xl font-extrabold tracking-tight sm:text-3xl">Great teams start with<br className="hidden sm:block"/> great people.</h1><p className="mt-3 max-w-md text-sm leading-6 text-indigo-100">Everything you need to keep your people, attendance and employee records in one clear place.</p><button onClick={openAdd} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-extrabold text-indigo-700 shadow-md transition hover:scale-[1.02]"><Plus size={17}/> Add a team member <ChevronRight size={16}/></button></div>
-          <div className="absolute bottom-7 right-8 hidden items-end gap-2 opacity-80 md:flex"><div className="grid h-14 w-14 place-items-center rounded-2xl border border-white/20 bg-white/10 text-xl">✦</div><div className="grid h-20 w-20 place-items-center rounded-3xl border border-white/20 bg-white/10"><Users size={36}/></div><div className="grid h-12 w-12 place-items-center rounded-xl border border-white/20 bg-white/10"><Check size={24}/></div></div>
-        </section>
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Stat title="Total employees" value={employees.length.toString()} detail="Across all departments" icon={Users} tint="indigo" trend="+12%" />
-          <Stat title="Active employees" value={active.toString()} detail={`${employees.length?Math.round(active/employees.length*100):0}% of your team`} icon={UserCheck} tint="emerald" trend="On track" />
-          <Stat title="On leave" value={onLeave.toString()} detail="Currently away" icon={CalendarDays} tint="orange" trend="Live status" />
-          <Stat title="Monthly payroll" value={money(payroll/12)} detail="Annual salary ÷ 12" icon={Wallet} tint="violet" trend="Estimate" />
-        </section>
-        <section className="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
-          <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6"><div className="flex items-start justify-between"><div><h2 className="font-extrabold tracking-tight">Team overview</h2><p className="mt-1 text-xs text-slate-400">Employees by department</p></div><button onClick={()=>{setNav('Departments');setDepartment('All departments')}} className="rounded-lg p-2 text-slate-400 hover:bg-slate-50"><MoreHorizontal size={19}/></button></div>
-            <div className="mt-6 space-y-5">{departments.map((d,i)=>{const count=employees.filter(e=>e.department===d).length;const pct=employees.length?count/employees.length*100:0;return <div key={d}><div className="mb-2 flex items-center justify-between text-sm"><span className="font-semibold text-slate-700">{d}</span><span className="text-xs font-bold text-slate-500">{count} <span className="font-normal text-slate-400">people</span></span></div><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full transition-all duration-500" style={{width:`${pct}%`,background:['#6366f1','#10b981','#f59e0b','#ec4899','#8b5cf6','#0ea5e9'][i]}}/></div></div>})}</div>
-          </div>
-          <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6"><div className="flex items-start justify-between"><div><h2 className="font-extrabold tracking-tight">Today’s attendance</h2><p className="mt-1 text-xs text-slate-400">Quick snapshot of your team</p></div><span className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700">Today</span></div>
-            <div className="mt-5 flex items-center gap-5"><div className="relative grid h-32 w-32 shrink-0 place-items-center rounded-full" style={{background:`conic-gradient(#10b981 ${employees.length?present/employees.length*100:0}%, #eef2f7 0)`}}><div className="grid h-[94px] w-[94px] place-items-center rounded-full bg-white"><div className="text-center"><div className="text-2xl font-extrabold">{present}</div><div className="text-[10px] font-semibold text-slate-400">Present</div></div></div></div><div className="flex-1 space-y-3"><MiniLegend color="#10b981" label="Present" value={present}/><MiniLegend color="#f97316" label="Absent" value={employees.filter(e=>e.attendance==='Absent').length}/><MiniLegend color="#cbd5e1" label="Not marked" value={employees.filter(e=>e.attendance==='Not marked').length}/></div></div>
-            <button onClick={()=>setNav('Attendance')} className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700">Manage attendance <ChevronRight size={16}/></button>
-          </div>
-        </section>
-        <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
-          <div className="flex flex-col justify-between gap-4 border-b border-slate-100 p-5 sm:flex-row sm:items-center sm:px-6"><div><div className="flex items-center gap-2"><h2 className="font-extrabold tracking-tight">{nav==='Attendance'?'Attendance register':nav==='Departments'?'Department directory':'All employees'}</h2><span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700">{filtered.length} records</span></div><p className="mt-1 text-xs text-slate-400">{nav==='Attendance'?'Mark daily attendance from the actions menu.':'Manage your team members and employee information.'}</p></div><div className="flex flex-wrap gap-2"><div className="relative min-w-[180px] flex-1 sm:flex-none"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search employees..." className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 sm:w-56"/></div><select value={department} onChange={e=>setDepartment(e.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600 outline-none focus:border-indigo-400"><option>All departments</option>{departments.map(d=><option key={d}>{d}</option>)}</select><select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600 outline-none focus:border-indigo-400"><option>All status</option><option>Active</option><option>On leave</option><option>Probation</option></select><button onClick={exportCsv} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50"><Download size={16}/><span className="hidden sm:inline">Export</span></button><button onClick={openAdd} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"><Plus size={16}/><span className="hidden sm:inline">Add</span></button></div></div>
-          {nav==='Attendance'&&<div className="flex items-start gap-3 border-b border-indigo-100 bg-indigo-50/70 px-5 py-3 text-xs leading-5 text-indigo-800 sm:px-6"><CalendarDays size={16} className="mt-0.5 shrink-0"/><span>Demo attendance is saved in this browser. Use the green check or red X in each row to mark today’s status.</span></div>}
-          <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left"><thead><tr className="bg-slate-50/80 text-[10px] font-extrabold uppercase tracking-[.12em] text-slate-400"><th className="px-6 py-4">Employee</th><th className="px-4 py-4">Department</th><th className="px-4 py-4">Status</th><th className="px-4 py-4">Salary / year</th><th className="px-4 py-4">{nav==='Attendance'?'Today':'Joined date'}</th><th className="px-5 py-4 text-right">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{filtered.map((e,i)=><tr key={e.id} className="group transition hover:bg-slate-50/70"><td className="px-6 py-4"><button onClick={()=>{setSelected(e);setModal('view')}} className="flex items-center gap-3 text-left"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-xs font-extrabold" style={{background:avatarColors[i%avatarColors.length],color:'#475569'}}>{initials(e.name)}</div><div><div className="text-sm font-bold text-slate-800 group-hover:text-indigo-700">{e.name}</div><div className="mt-0.5 text-xs text-slate-400">{e.role} · {e.id}</div></div></button></td><td className="px-4 py-4"><span className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600">{e.department}</span></td><td className="px-4 py-4"><Status status={e.status}/>{nav==='Attendance'&&<div className="mt-1 text-[11px] text-slate-400">{e.attendance}</div>}</td><td className="px-4 py-4 text-sm font-semibold text-slate-700">{money(e.salary)}</td><td className="px-4 py-4 text-xs font-medium text-slate-500">{nav==='Attendance'?<span className={`inline-flex items-center gap-1.5 ${e.attendance==='Present'?'text-emerald-700':e.attendance==='Absent'?'text-rose-600':'text-slate-400'}`}><span className="h-1.5 w-1.5 rounded-full bg-current"/>{e.attendance}</span>:new Date(e.joined+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</td><td className="px-5 py-4"><div className="flex items-center justify-end gap-1"><button title="View employee" onClick={()=>{setSelected(e);setModal('view')}} className="rounded-lg p-2 text-slate-400 hover:bg-indigo-50 hover:text-indigo-700"><Eye size={16}/></button><button title="Edit employee" onClick={()=>openEdit(e)} className="rounded-lg p-2 text-slate-400 hover:bg-indigo-50 hover:text-indigo-700"><Pencil size={16}/></button>{nav==='Attendance'?<><button title="Mark present" onClick={()=>markAttendance(e,'Present')} className="rounded-lg p-2 text-emerald-600 hover:bg-emerald-50"><Check size={17}/></button><button title="Mark absent" onClick={()=>markAttendance(e,'Absent')} className="rounded-lg p-2 text-rose-500 hover:bg-rose-50"><UserX size={16}/></button></>:<button title="Delete employee" onClick={()=>removeEmployee(e)} className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={16}/></button>}</div></td></tr>)}</tbody></table>{filtered.length===0&&<div className="px-6 py-16 text-center"><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-400"><Search size={21}/></div><h3 className="mt-3 font-bold">No employees found</h3><p className="mt-1 text-sm text-slate-400">Try changing your search or filters.</p><button onClick={()=>{setQuery('');setDepartment('All departments');setStatusFilter('All status')}} className="mt-4 text-sm font-bold text-indigo-600">Clear filters</button></div>}</div>
-          <div className="flex items-center justify-between border-t border-slate-100 px-5 py-4 text-xs text-slate-400 sm:px-6"><span>Showing <strong className="text-slate-600">{filtered.length}</strong> of <strong className="text-slate-600">{employees.length}</strong> employees</span><span className="flex items-center gap-1"><ShieldCheck size={14} className="text-emerald-600"/> Demo data stored locally</span></div>
-        </section>
-        <footer className="flex flex-col gap-2 pb-2 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between"><span>© 2026 PeopleOS · Employee workspace</span><span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500"/> All systems operational <span className="mx-1">·</span> Demo version 1.0</span></footer>
+  // Handlers: Employees
+  const handleSaveEmployee = (emp: Employee) => {
+    setData((prev) => {
+      const exists = prev.employees.some((e) => e.id === emp.id);
+      let updatedEmployees: Employee[];
+      let updatedAttendance = [...prev.attendance];
+
+      if (exists) {
+        updatedEmployees = prev.employees.map((e) => (e.id === emp.id ? emp : e));
+        // Update attendance name/role if changed
+        updatedAttendance = updatedAttendance.map((a) =>
+          a.employeeId === emp.id
+            ? { ...a, employeeName: emp.name, employeeRole: emp.role, department: emp.department }
+            : a
+        );
+      } else {
+        updatedEmployees = [emp, ...prev.employees];
+        // Add attendance record for new employee
+        const newAtt: AttendanceRecord = {
+          id: `att-${Date.now()}`,
+          employeeId: emp.id,
+          employeeName: emp.name,
+          employeeRole: emp.role,
+          department: emp.department,
+          date: new Date().toISOString().slice(0, 10),
+          checkIn: '09:00 AM',
+          checkOut: null,
+          status: 'Present',
+          workMode: 'In-Office',
+        };
+        updatedAttendance.push(newAtt);
+      }
+
+      const newActivity = {
+        id: `act-${Date.now()}`,
+        user: 'Admin Manager',
+        action: exists ? 'updated profile details for' : 'added new employee',
+        target: `${emp.name} (${emp.role})`,
+        time: 'Just now',
+        type: 'employee' as const,
+      };
+
+      return {
+        ...prev,
+        employees: updatedEmployees,
+        attendance: updatedAttendance,
+        activities: [newActivity, ...prev.activities],
+      };
+    });
+
+    setToast(editingEmployee ? 'Employee updated successfully' : 'Employee added to database');
+    setEditingEmployee(null);
+  };
+
+  const handleDeleteEmployee = (emp: Employee) => {
+    if (window.confirm(`Are you sure you want to remove ${emp.name} from the database?`)) {
+      setData((prev) => ({
+        ...prev,
+        employees: prev.employees.filter((e) => e.id !== emp.id),
+        attendance: prev.attendance.filter((a) => a.employeeId !== emp.id),
+        activities: [
+          {
+            id: `act-${Date.now()}`,
+            user: 'Admin Manager',
+            action: 'deleted employee record',
+            target: emp.name,
+            time: 'Just now',
+            type: 'employee',
+          },
+          ...prev.activities,
+        ],
+      }));
+      setToast(`${emp.name} was removed from the database`);
+    }
+  };
+
+  // Handlers: Attendance
+  const handleUpdateAttendanceStatus = (
+    id: string,
+    newStatus: AttendanceStatus,
+    mode?: WorkMode
+  ) => {
+    setData((prev) => {
+      let targetName = '';
+      const updatedAttendance = prev.attendance.map((rec) => {
+        if (rec.id === id) {
+          targetName = rec.employeeName;
+          return {
+            ...rec,
+            status: newStatus,
+            workMode: mode || rec.workMode,
+            checkIn: newStatus === 'Absent' ? null : rec.checkIn || '09:00 AM',
+          };
+        }
+        return rec;
+      });
+
+      return {
+        ...prev,
+        attendance: updatedAttendance,
+        activities: [
+          {
+            id: `act-${Date.now()}`,
+            user: 'Admin Manager',
+            action: `marked status as ${newStatus} for`,
+            target: targetName || 'Employee',
+            time: 'Just now',
+            type: 'attendance',
+          },
+          ...prev.activities,
+        ],
+      };
+    });
+    setToast(`Attendance updated to ${newStatus}`);
+  };
+
+  const handleMarkAllPresent = () => {
+    setData((prev) => ({
+      ...prev,
+      attendance: prev.attendance.map((a) => ({
+        ...a,
+        status: 'Present',
+        checkIn: a.checkIn || '09:00 AM',
+        workMode: 'In-Office',
+      })),
+      activities: [
+        {
+          id: `act-${Date.now()}`,
+          user: 'Admin Manager',
+          action: 'bulk verified presence for',
+          target: 'All staff',
+          time: 'Just now',
+          type: 'attendance',
+        },
+        ...prev.activities,
+      ],
+    }));
+    setToast('All unrecorded employees marked as Present');
+  };
+
+  // Handlers: Leaves
+  const handleApproveLeave = (leaveId: string) => {
+    setData((prev) => {
+      let reqEmployee = '';
+      const updatedLeaves = prev.leaves.map((l) => {
+        if (l.id === leaveId) {
+          reqEmployee = l.employeeName;
+          return { ...l, status: 'Approved' as const };
+        }
+        return l;
+      });
+
+      return {
+        ...prev,
+        leaves: updatedLeaves,
+        activities: [
+          {
+            id: `act-${Date.now()}`,
+            user: 'Admin Manager',
+            action: 'approved time-off request for',
+            target: reqEmployee,
+            time: 'Just now',
+            type: 'leave',
+          },
+          ...prev.activities,
+        ],
+      };
+    });
+    setToast('Leave request approved');
+  };
+
+  const handleRejectLeave = (leaveId: string) => {
+    setData((prev) => {
+      let reqEmployee = '';
+      const updatedLeaves = prev.leaves.map((l) => {
+        if (l.id === leaveId) {
+          reqEmployee = l.employeeName;
+          return { ...l, status: 'Rejected' as const };
+        }
+        return l;
+      });
+
+      return {
+        ...prev,
+        leaves: updatedLeaves,
+        activities: [
+          {
+            id: `act-${Date.now()}`,
+            user: 'Admin Manager',
+            action: 'rejected time-off request for',
+            target: reqEmployee,
+            time: 'Just now',
+            type: 'leave',
+          },
+          ...prev.activities,
+        ],
+      };
+    });
+    setToast('Leave request rejected');
+  };
+
+  const handleSubmitLeave = (newLeave: LeaveRequest) => {
+    setData((prev) => ({
+      ...prev,
+      leaves: [newLeave, ...prev.leaves],
+      activities: [
+        {
+          id: `act-${Date.now()}`,
+          user: newLeave.employeeName,
+          action: 'submitted time-off request for',
+          target: `${newLeave.type} (${newLeave.days} days)`,
+          time: 'Just now',
+          type: 'leave',
+        },
+        ...prev.activities,
+      ],
+    }));
+    setToast('Leave request submitted successfully');
+  };
+
+  // Handlers: Reset & Exports
+  const handleResetData = () => {
+    if (window.confirm('Reset all changes and reload the fresh demo dummy database?')) {
+      const fresh = resetAppData();
+      setData(fresh);
+      setToast('Dummy database restored to initial sample state');
+    }
+  };
+
+  const handleExportCsv = () => {
+    const headers = [
+      'ID',
+      'Name',
+      'Email',
+      'Phone',
+      'Role',
+      'Department',
+      'Status',
+      'Contract Type',
+      'Salary (USD)',
+      'Joined Date',
+      'Location',
+    ];
+    const rows = data.employees.map((e) => [
+      e.id,
+      `"${e.name.replace(/"/g, '""')}"`,
+      e.email,
+      e.phone,
+      `"${e.role.replace(/"/g, '""')}"`,
+      `"${e.department.replace(/"/g, '""')}"`,
+      e.status,
+      e.type,
+      e.salary,
+      e.joined,
+      `"${e.location.replace(/"/g, '""')}"`,
+    ]);
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'peopleos-employees.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+    setToast('Employee CSV exported');
+  };
+
+  const handleExportJson = () => {
+    const jsonStr = JSON.stringify(data, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'peopleos-database-backup.json';
+    link.click();
+    URL.revokeObjectURL(url);
+    setToast('Database backup downloaded as JSON');
+  };
+
+  // Calculated counts for navigation badges
+  const sidebarCounts = {
+    employees: data.employees.length,
+    present: data.attendance.filter((a) => a.status === 'Present' || a.status === 'Remote').length,
+    departments: data.departments.length,
+    pendingLeaves: data.leaves.filter((l) => l.status === 'Pending').length,
+  };
+
+  return (
+    <div className="min-h-screen bg-[#f8fafc] text-[#0f172a] antialiased">
+      {/* Collapsible Sidebar */}
+      <Sidebar
+        currentTab={currentTab}
+        onSelectTab={setCurrentTab}
+        counts={sidebarCounts}
+        onResetData={handleResetData}
+        mobileOpen={mobileMenuOpen}
+        onCloseMobile={() => setMobileMenuOpen(false)}
+      />
+
+      {/* Main Content Area */}
+      <div className="lg:pl-72 flex flex-col min-h-screen">
+        {/* Sticky Top Header */}
+        <Header
+          currentTab={currentTab}
+          onOpenMobile={() => setMobileMenuOpen(true)}
+          onOpenAddEmployee={() => {
+            setEditingEmployee(null);
+            setIsEmployeeModalOpen(true);
+          }}
+          activities={data.activities}
+        />
+
+        {/* View Container */}
+        <main className="flex-1 px-5 py-6 sm:px-8 sm:py-8 max-w-7xl w-full mx-auto">
+          {currentTab === 'overview' && (
+            <OverviewView
+              data={data}
+              onNavigate={setCurrentTab}
+              onApproveLeave={handleApproveLeave}
+              onRejectLeave={handleRejectLeave}
+              onOpenAddEmployee={() => {
+                setEditingEmployee(null);
+                setIsEmployeeModalOpen(true);
+              }}
+            />
+          )}
+
+          {currentTab === 'employees' && (
+            <EmployeesView
+              employees={data.employees}
+              departments={data.departments}
+              initialDepartmentFilter={selectedDepartmentFilter}
+              onOpenAddModal={() => {
+                setEditingEmployee(null);
+                setIsEmployeeModalOpen(true);
+              }}
+              onOpenEditModal={(emp) => {
+                setEditingEmployee(emp);
+                setIsEmployeeModalOpen(true);
+              }}
+              onOpenViewDrawer={(emp) => setViewingEmployee(emp)}
+              onDeleteEmployee={handleDeleteEmployee}
+              onExportCsv={handleExportCsv}
+            />
+          )}
+
+          {currentTab === 'attendance' && (
+            <AttendanceView
+              attendance={data.attendance}
+              departments={data.departments}
+              onUpdateAttendanceStatus={handleUpdateAttendanceStatus}
+              onMarkAllPresent={handleMarkAllPresent}
+            />
+          )}
+
+          {currentTab === 'departments' && (
+            <DepartmentsView
+              departments={data.departments}
+              employees={data.employees}
+              onSelectDepartment={(deptName) => {
+                setSelectedDepartmentFilter(deptName);
+                setCurrentTab('employees');
+              }}
+            />
+          )}
+
+          {currentTab === 'leaves' && (
+            <LeavesView
+              leaves={data.leaves}
+              onApproveLeave={handleApproveLeave}
+              onRejectLeave={handleRejectLeave}
+              onOpenLeaveModal={() => setIsLeaveModalOpen(true)}
+            />
+          )}
+
+          {currentTab === 'settings' && (
+            <SettingsView
+              data={data}
+              onResetData={handleResetData}
+              onExportJson={handleExportJson}
+            />
+          )}
+        </main>
       </div>
-    </main>
-    {modal&&<div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/40 p-4 backdrop-blur-sm" onMouseDown={e=>{if(e.target===e.currentTarget)setModal(null)}}><div className="my-6 w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl">
-      <div className="flex items-start justify-between border-b border-slate-100 px-6 py-5 sm:px-8"><div><div className="text-xs font-bold uppercase tracking-[.14em] text-indigo-600">{modal==='add'?'New team member':modal==='edit'?'Update employee':'Employee profile'}</div><h2 className="mt-1 text-xl font-extrabold tracking-tight">{modal==='add'?'Add an employee':modal==='edit'?'Edit employee details':selected?.name}</h2><p className="mt-1 text-sm text-slate-400">{modal==='view'?'Employee information and current status':'Fields marked with * are required.'}</p></div><button onClick={()=>setModal(null)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"><X size={19}/></button></div>
-      {modal==='view'&&selected?<div className="p-6 sm:p-8"><div className="flex flex-col gap-5 sm:flex-row sm:items-center"><div className="grid h-20 w-20 place-items-center rounded-3xl bg-indigo-100 text-2xl font-extrabold text-indigo-700">{initials(selected.name)}</div><div className="flex-1"><div className="text-xl font-extrabold">{selected.name}</div><div className="mt-1 text-sm text-slate-500">{selected.role} · {selected.id}</div><div className="mt-3"><Status status={selected.status}/></div></div><button onClick={()=>openEdit(selected)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"><Pencil size={15}/> Edit profile</button></div><div className="mt-7 grid gap-3 sm:grid-cols-2">{[{icon:Mail,label:'Email address',value:selected.email},{icon:Phone,label:'Phone number',value:selected.phone||'Not provided'},{icon:Building2,label:'Department',value:selected.department},{icon:MapPin,label:'Location',value:selected.location||'Not provided'},{icon:Wallet,label:'Annual salary',value:money(selected.salary)},{icon:CalendarDays,label:'Joining date',value:new Date(selected.joined+'T00:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}].map((x,i)=><div key={i} className="flex items-start gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-4"><x.icon size={17} className="mt-0.5 text-indigo-500"/><div><div className="text-xs font-semibold text-slate-400">{x.label}</div><div className="mt-1 break-all text-sm font-bold text-slate-700">{x.value}</div></div></div>)}</div></div>:<form onSubmit={saveEmployee} className="p-6 sm:p-8"><div className="grid gap-4 sm:grid-cols-2"><Field label="Full name *"><input required value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Alex Morgan" className={inputClass}/></Field><Field label="Work email *"><input required type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="alex@company.com" className={inputClass}/></Field><Field label="Job title *"><input required value={form.role} onChange={e=>setForm({...form,role:e.target.value})} placeholder="e.g. Product Designer" className={inputClass}/></Field><Field label="Phone number"><input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="+92 300 0000000" className={inputClass}/></Field><Field label="Department"><select value={form.department} onChange={e=>setForm({...form,department:e.target.value})} className={inputClass}>{departments.map(d=><option key={d}>{d}</option>)}</select></Field><Field label="Employment status"><select value={form.status} onChange={e=>setForm({...form,status:e.target.value as Employee['status']})} className={inputClass}><option>Active</option><option>On leave</option><option>Probation</option></select></Field><Field label="Annual salary (USD)"><input type="number" min="0" value={form.salary} onChange={e=>setForm({...form,salary:e.target.value})} placeholder="65000" className={inputClass}/></Field><Field label="Joining date"><input type="date" value={form.joined} onChange={e=>setForm({...form,joined:e.target.value})} className={inputClass}/></Field><Field label="Office location"><input value={form.location} onChange={e=>setForm({...form,location:e.target.value})} placeholder="Remote / City" className={inputClass}/></Field></div><div className="mt-7 flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end"><button type="button" onClick={()=>setModal(null)} className="rounded-xl border border-slate-200 px-5 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button><button type="submit" className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-200 hover:bg-indigo-700"><Check size={16}/>{modal==='edit'?'Save changes':'Create employee'}</button></div></form>}
-    </div></div>}
-    {toast&&<div className="fixed bottom-5 right-5 z-[60] flex max-w-[calc(100vw-40px)] items-center gap-3 rounded-2xl bg-slate-900 px-4 py-3.5 text-sm font-semibold text-white shadow-2xl"><span className="grid h-6 w-6 place-items-center rounded-full bg-emerald-400/20 text-emerald-300"><Check size={15}/></span>{toast}<button onClick={()=>setToast('')} className="ml-2 text-slate-400 hover:text-white"><X size={15}/></button></div>}
-  </div>;
-}
 
-const inputClass = "mt-2 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50";
-function Field({label,children}:{label:string;children:React.ReactNode}) { return <label className="block text-xs font-bold text-slate-600">{label}{children}</label>; }
-function Status({status}:{status:Employee['status']}) { const c=status==='Active'?'bg-emerald-50 text-emerald-700':status==='On leave'?'bg-orange-50 text-orange-700':'bg-violet-50 text-violet-700'; return <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${c}`}><span className="h-1.5 w-1.5 rounded-full bg-current"/>{status}</span>; }
-function MiniLegend({color,label,value}:{color:string;label:string;value:number}) { return <div className="flex items-center justify-between gap-3 text-xs"><span className="flex items-center gap-2 text-slate-500"><span className="h-2 w-2 rounded-full" style={{background:color}}/>{label}</span><span className="font-extrabold text-slate-700">{value}</span></div>; }
-function Stat({title,value,detail,icon:Icon,tint,trend}:{title:string;value:string;detail:string;icon:any;tint:string;trend:string}) { const tones:Record<string,string>={indigo:'bg-indigo-50 text-indigo-600',emerald:'bg-emerald-50 text-emerald-600',orange:'bg-orange-50 text-orange-600',violet:'bg-violet-50 text-violet-600'}; return <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex items-center justify-between"><div className={`grid h-11 w-11 place-items-center rounded-2xl ${tones[tint]}`}><Icon size={20}/></div><span className="rounded-full bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500">{trend}</span></div><div className="mt-5 text-sm font-semibold text-slate-500">{title}</div><div className="mt-1 text-3xl font-extrabold tracking-tight">{value}</div><div className="mt-1 text-xs text-slate-400">{detail}</div></div>; }
+      {/* Add / Edit Employee Modal */}
+      <EmployeeModal
+        isOpen={isEmployeeModalOpen}
+        onClose={() => {
+          setIsEmployeeModalOpen(false);
+          setEditingEmployee(null);
+        }}
+        onSave={handleSaveEmployee}
+        departments={data.departments}
+        editingEmployee={editingEmployee}
+      />
+
+      {/* Employee Detail Drawer */}
+      <EmployeeDrawer
+        employee={viewingEmployee}
+        attendanceRecord={data.attendance.find((a) => a.employeeId === viewingEmployee?.id)}
+        onClose={() => setViewingEmployee(null)}
+        onEdit={(emp) => {
+          setViewingEmployee(null);
+          setEditingEmployee(emp);
+          setIsEmployeeModalOpen(true);
+        }}
+        onDelete={(emp) => {
+          setViewingEmployee(null);
+          handleDeleteEmployee(emp);
+        }}
+      />
+
+      {/* Submit Leave Request Modal */}
+      <LeaveModal
+        isOpen={isLeaveModalOpen}
+        onClose={() => setIsLeaveModalOpen(false)}
+        employees={data.employees}
+        onSubmit={handleSubmitLeave}
+      />
+
+      {/* Toast Feedback Notification */}
+      <Toast message={toast} onClose={() => setToast(null)} />
+    </div>
+  );
+}
